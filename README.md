@@ -6,8 +6,10 @@ Hyprland's own (`hyprland.general.col.active_border`, `hyprland.decoration.blur.
 `input-capture` and `tap-to-click` are spelled with underscores, as its Lua config spells them.
 Everything left `null` is not written, so Hyprland's own default applies.
 
-The app writes Lua through the `lua` adapter of `kosm_lua`, which this package brings along
-(`kosm_hyprland.lua_adapter`), so a config needs only `kosm_hyprland`.
+The generated module is written by this package's own `hyprland` adapter: Hyprland's calls
+(`hl.curve`, `hl.animation`), then the table `hl.config` takes, with values spelled by the `lua`
+adapter of `kosm_lua`. The package brings that one along too (`kosm_hyprland.lua_adapter`), so a
+config needs only `kosm_hyprland`.
 
 ## Who owns the values
 
@@ -102,6 +104,26 @@ path in your files (`*` matches one key there). An extra whose path equals, cont
 inside a set option's or another extra's fails the apply naming both, checked by
 `kosm.Setting.withExtras`, which any app can use.
 
+## Curves and animations
+
+```zig
+app.curve = &.{
+    .{ .name = "expo_out", .curve = .ease_out_expo },
+    .{ .name = "bounce", .curve = .{ .spring = .{ .stiffness = 50, .damping = 10 } } },
+};
+app.animation = &.{
+    .{ .leaf = .windows, .speed = 3, .curve = "expo_out", .style = "slide bottom" },
+    .{ .leaf = .windows_in, .speed = 4.5, .curve = "bounce" },
+    .{ .leaf = .fade, .enabled = false },
+};
+```
+
+They are written as calls at the top of the generated module, before the table it returns, so
+your own `hl.curve` and `hl.animation` files can go. An enabled animation needs a speed above 0
+and a curve; one naming a curve that is neither in `curve` nor `default` fails the apply, as do
+a curve or a leaf given twice and a spring value below 0.5, which Hyprland refuses. With the
+`.edit` target both must stay empty: kosm never adds calls to your files.
+
 ## App fields
 
 | Field | Default |
@@ -110,6 +132,8 @@ inside a set option's or another extra's fails the apply naming both, checked by
 | `include` | `"~/.config/hypr/hyprland.lua"`: the file that gets the block reading the generated module, `.generate` target only; `null` for no block |
 | `format` | `.{ .color = .hex8 }`: `#rrggbbaa`, so alpha is kept; the rest from the Lua adapter, then kosm |
 | `keyboard` | null: nothing derived. A `kosm.Keyboard` (`.{ .layouts = &.{ .{ .layout = "us" }, .{ .layout = "rs", .variant = "latin" } } }`) fills `input.kb_layout`, `kb_variant`, `kb_model`, `kb_options` and `kb_rules` where they are null, as XKB's comma lists (`us,rs` and `,latin`) |
+| `curve` | `&.{}`: the curves animations name, each `.{ .name = "expo_out", .curve = .ease_out_expo }` (any `kosm.Curve`: a bezier, a spring, a standard easing) and one `hl.curve` call. `.generate` target only |
+| `animation` | `&.{}`: Hyprland's own animations. Each entry is one `hl.animation` call: `.leaf` (`.windows`, `.fade_in`, `.border_angle`, ...), `.enabled` (true), `.speed` in tenths of a second, `.curve` (a name in `curve`, or `default`) and `.style` as Hyprland spells it. `.generate` target only |
 | `inactive` | null: nothing derived; `from`: the theme's `state.inactive`, deriving the inactive colors listed above |
 | `extra` | `&.{}`: settings the app doesn't cover, by path |
 

@@ -8,7 +8,10 @@ pub const App = @import("App.zig");
 pub const from = App.from;
 /// The types Hyprland options take, for naming them in a kosmos.
 pub const values = @import("values.zig");
-/// The adapter the app writes with, so a config needs only this package to rice Hyprland.
+/// Writes the module the app generates: Hyprland's calls, then the table `hl.config` takes.
+pub const adapter = @import("adapter.zig").adapter;
+/// The adapter the app edits the user's own files with, and `adapter` spells values with, so a
+/// config needs only this package to rice Hyprland.
 pub const lua_adapter = @import("kosm_lua").adapter;
 
 test {

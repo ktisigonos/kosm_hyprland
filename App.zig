@@ -8,6 +8,7 @@ const std = @import("std");
 const kosm = @import("kosm");
 const values = @import("values.zig");
 const settings = @import("settings.zig");
+const hyprland_adapter = @import("adapter.zig");
 
 /// Where the options go: a Lua module kosm writes whole, or the user's own Lua files.
 /// Default: `default_target`.
@@ -28,6 +29,14 @@ inactive: ?kosm.Modifier = null,
 /// separated lists to `input.kb_layout`, `kb_variant`, `kb_model`, `kb_options` and `kb_rules`
 /// wherever those are null. null: nothing is derived. Default: null.
 keyboard: ?kosm.Keyboard = null,
+/// The curves animations can name, each one `hl.curve` call in the generated module:
+/// `.{ .name = "expo_out", .curve = .ease_out_expo }`. Only with the `.generate` target.
+/// Default: none.
+curve: []const values.Curve = &.{},
+/// How the parts of Hyprland's animation tree move, each one `hl.animation` call in the
+/// generated module: `.{ .leaf = .windows, .speed = 3, .curve = "expo_out", .style = "slide" }`.
+/// Only with the `.generate` target. Default: none, so Hyprland's own animations apply.
+animation: []const values.Animation = &.{},
 /// Settings the app doesn't cover, such as a plugin's, written after its own:
 /// `.{ .path = "plugin.dynamic_cursors.length", .value = .{ .integer = 24 } }`. One that
 /// overlaps a set option or another extra fails the apply. Default: none.
@@ -122,7 +131,7 @@ pub const InputCapture = @import("sections/InputCapture.zig");
 pub const Quirks = @import("sections/Quirks.zig");
 
 /// App fields that are kosm's, not Hyprland options.
-const own_fields = [_][]const u8{ "target", "include", "format", "inactive", "keyboard", "extra" };
+const own_fields = [_][]const u8{ "target", "include", "format", "inactive", "keyboard", "curve", "animation", "extra" };
 
 /// Colors from the theme: the active border, glow and groupbar text from the accent
 /// (cyan) and the foreground, groups in yellow (locked: orange), windows that can't be grouped in
@@ -174,15 +183,113 @@ pub fn apply(self: App, output: *kosm.Output) !void {
         .generate => {
             if (self.include != null and !std.mem.eql(u8, file, default_module))
                 return output.fail(self.include.?, "the include block reads require(\"kosm\"), which finds only {s}, not {s}; set include = null and read it yourself", .{ default_module, file });
-            try output.generate(.{ .file = file, .lang = "lua", .format = self.format }, try kosm.Setting.tree(output.allocator, set));
+            try output.generate(.{ .file = file, .lang = "hyprland", .format = self.format }, try self.module(output, file, try kosm.Setting.tree(output.allocator, set)));
             if (self.include) |include|
                 try output.templateBlock(self, .{ .file = include, .id = "hyprland", .text = "hl.config(require(\"kosm\"))\n", .lang = "lua", .missing = .skip });
         },
         .edit => |files| {
+            if (self.curve.len != 0 or self.animation.len != 0)
+                return output.fail(file, "curves and animations are calls, which kosm writes only into a module it generates; leave curve and animation empty, or use the generate target", .{});
             var selection = try output.edit(.{ .files = files.files, .exclude = files.exclude, .lang = "lua", .format = self.format });
             for (set) |setting| try selection.set(setting.path, setting.value);
         },
     }
+}
+
+/// The generated module as the `hyprland` adapter takes it: the curves and animations, then
+/// `config`, the options. A curve or animation Hyprland would refuse fails the apply.
+fn module(self: App, output: *kosm.Output, file: []const u8, config: kosm.Value) !kosm.Value {
+    const allocator = output.allocator;
+    var parts: std.ArrayList(kosm.Value.Entry) = .empty;
+    if (self.curve.len != 0) {
+        const curves = try allocator.alloc(kosm.Value.Entry, self.curve.len);
+        for (self.curve, curves, 0..) |named, *entry, index| {
+            if (named.name.len == 0) return output.fail(file, "curve {d} has no name", .{index + 1});
+            for (self.curve[0..index]) |earlier| {
+                if (std.mem.eql(u8, earlier.name, named.name)) return output.fail(file, "curve '{s}' is defined twice", .{named.name});
+            }
+            entry.* = .{ .key = named.name, .value = try curveValue(output, file, named) };
+        }
+        try parts.append(allocator, .{ .key = hyprland_adapter.curve_part, .value = .{ .table = curves } });
+    }
+    if (self.animation.len != 0) {
+        const animations = try allocator.alloc(kosm.Value, self.animation.len);
+        for (self.animation, animations, 0..) |animation, *value, index| {
+            for (self.animation[0..index]) |earlier| {
+                if (earlier.leaf == animation.leaf) return output.fail(file, "animation '{s}' is set twice", .{animation.leaf.name()});
+            }
+            value.* = try self.animationValue(output, file, animation);
+        }
+        try parts.append(allocator, .{ .key = hyprland_adapter.animation_part, .value = .{ .list = animations } });
+    }
+    try parts.append(allocator, .{ .key = hyprland_adapter.config_part, .value = config });
+    return .{ .table = parts.items };
+}
+
+/// Hyprland refuses a spring whose mass, stiffness or damping is below this.
+const min_spring_value = 0.5;
+
+/// The table `hl.curve` takes after the name.
+fn curveValue(output: *kosm.Output, file: []const u8, named: values.Curve) !kosm.Value {
+    const allocator = output.allocator;
+    switch (named.curve) {
+        .bezier => |bezier| {
+            const points = try allocator.dupe(kosm.Value, &.{
+                .{ .list = try allocator.dupe(kosm.Value, &.{ .{ .float = bezier.x1 }, .{ .float = bezier.y1 } }) },
+                .{ .list = try allocator.dupe(kosm.Value, &.{ .{ .float = bezier.x2 }, .{ .float = bezier.y2 } }) },
+            });
+            return .{ .table = try allocator.dupe(kosm.Value.Entry, &.{
+                .{ .key = "type", .value = .{ .string = "bezier" } },
+                .{ .key = "points", .value = .{ .list = points } },
+            }) };
+        },
+        .spring => |spring| {
+            inline for (.{ "mass", "stiffness", "damping" }) |field| {
+                if (@field(spring, field) < min_spring_value)
+                    return output.fail(file, "curve '{s}': its spring's {s} is {d}, and Hyprland takes none below {d}", .{ named.name, field, @field(spring, field), min_spring_value });
+            }
+            return .{ .table = try allocator.dupe(kosm.Value.Entry, &.{
+                .{ .key = "type", .value = .{ .string = "spring" } },
+                .{ .key = "mass", .value = .{ .float = spring.mass } },
+                .{ .key = "stiffness", .value = .{ .float = spring.stiffness } },
+                .{ .key = "damping", .value = .{ .float = spring.damping } },
+            }) };
+        },
+    }
+}
+
+/// The table `hl.animation` takes. Hyprland names an animation's curve under `bezier` or
+/// `spring`, by what the curve is.
+fn animationValue(self: App, output: *kosm.Output, file: []const u8, animation: values.Animation) !kosm.Value {
+    const leaf = animation.leaf.name();
+    var entries: std.ArrayList(kosm.Value.Entry) = .empty;
+    try entries.append(output.allocator, .{ .key = "leaf", .value = .{ .string = leaf } });
+    try entries.append(output.allocator, .{ .key = "enabled", .value = .{ .boolean = animation.enabled } });
+    if (animation.speed) |speed| {
+        if (!(speed > 0)) return output.fail(file, "animation '{s}': its speed is {d}, and Hyprland takes only speeds above 0", .{ leaf, speed });
+        try entries.append(output.allocator, .{ .key = "speed", .value = .{ .float = speed } });
+    } else if (animation.enabled) return output.fail(file, "animation '{s}' is enabled, so it needs a speed", .{leaf});
+    if (animation.curve) |name| {
+        try entries.append(output.allocator, .{ .key = try self.curveKind(output, file, leaf, name), .value = .{ .string = name } });
+    } else if (animation.enabled) return output.fail(file, "animation '{s}' is enabled, so it needs a curve", .{leaf});
+    if (animation.style) |style| try entries.append(output.allocator, .{ .key = "style", .value = .{ .string = style } });
+    return .{ .table = entries.items };
+}
+
+/// "bezier" or "spring": what the curve `name` is. One the app does not define fails the
+/// apply, naming the animation and the curves there are.
+fn curveKind(self: App, output: *kosm.Output, file: []const u8, leaf: []const u8, name: []const u8) ![]const u8 {
+    for (self.curve) |named| {
+        if (std.mem.eql(u8, named.name, name)) return @tagName(named.curve);
+    }
+    if (std.mem.eql(u8, name, values.Animation.default_curve)) return "bezier";
+    var defined: std.ArrayList(u8) = .empty;
+    try defined.appendSlice(output.allocator, values.Animation.default_curve);
+    for (self.curve) |named| {
+        try defined.appendSlice(output.allocator, ", ");
+        try defined.appendSlice(output.allocator, named.name);
+    }
+    return output.fail(file, "animation '{s}' names the curve '{s}', which is not defined; curves: {s}", .{ leaf, name, defined.items });
 }
 
 /// The app with every null `input.kb_*` option taken from `keyboard`.
@@ -245,7 +352,7 @@ const Fixture = struct {
         fixture.output = .{
             .allocator = fixture.arena.allocator(),
             .home = fixture.home_buffer[0..length],
-            .adapters = &.{lua.adapter},
+            .adapters = &.{ lua.adapter, hyprland_adapter.adapter },
             .plan = &fixture.plan,
             .diagnostics = &fixture.diagnostics,
             .warnings = &fixture.warnings,
@@ -792,4 +899,93 @@ test "a keyboard name holding a comma fails the apply, naming the app and the na
     try testing.expectEqualStrings("hyprland", fixture.diagnostics.app);
     try testing.expectEqualStrings("keyboard layout 'rs,ru' holds a comma, which separates entries; give each its own entry", fixture.diagnostics.message());
     try testing.expectEqual(0, fixture.plan.files.items.len);
+}
+
+test "curves and animations are calls before the returned table, each animation naming its curve by kind" {
+    var fixture: Fixture = undefined;
+    try fixture.init(&.{});
+    defer fixture.deinit();
+    var app = bareApp();
+    app.animations.enabled = true;
+    app.curve = &.{
+        .{ .name = "expo_out", .curve = .ease_out_expo },
+        .{ .name = "bounce", .curve = .{ .spring = .{ .stiffness = 50, .damping = 10 } } },
+    };
+    app.animation = &.{
+        .{ .leaf = .windows, .speed = 3, .curve = "expo_out", .style = "slide bottom" },
+        .{ .leaf = .windows_in, .speed = 4.5, .curve = "bounce" },
+        .{ .leaf = .border_angle, .speed = 30, .curve = "default", .style = "loop" },
+        .{ .leaf = .fade, .enabled = false },
+    };
+    try app.apply(&fixture.output);
+    try testing.expectEqualStrings(
+        \\hl.curve("expo_out", { type = "bezier", points = { { 0.16, 1 }, { 0.3, 1 } } })
+        \\hl.curve("bounce", { type = "spring", mass = 1, stiffness = 50, damping = 10 })
+        \\
+        \\hl.animation({ leaf = "windows", enabled = true, speed = 3, bezier = "expo_out", style = "slide bottom" })
+        \\hl.animation({ leaf = "windowsIn", enabled = true, speed = 4.5, spring = "bounce" })
+        \\hl.animation({ leaf = "borderangle", enabled = true, speed = 30, bezier = "default", style = "loop" })
+        \\hl.animation({ leaf = "fade", enabled = false })
+        \\
+        \\return {
+        \\    animations = {
+        \\        enabled = true,
+        \\    },
+        \\}
+        \\
+    , fixture.planned("~/.config/hypr/kosm.lua"));
+}
+
+test "an animation naming a curve that is not defined fails the apply, naming both" {
+    var fixture: Fixture = undefined;
+    try fixture.init(&.{});
+    defer fixture.deinit();
+    var app = bareApp();
+    app.curve = &.{.{ .name = "expo_out", .curve = .ease_out_expo }};
+    app.animation = &.{.{ .leaf = .workspaces_in, .speed = 3, .curve = "quad_out" }};
+    try testing.expectError(error.AppFailed, app.apply(&fixture.output));
+    try testing.expectEqualStrings("animation 'workspacesIn' names the curve 'quad_out', which is not defined; curves: default, expo_out", fixture.diagnostics.message());
+    try testing.expectEqualStrings("hyprland", fixture.diagnostics.app);
+    try testing.expectEqual(0, fixture.plan.files.items.len);
+}
+
+test "curves and animations Hyprland would refuse fail the apply, each naming what is wrong" {
+    const Case = struct { app: App, message: []const u8 };
+    var weak_spring = bareApp();
+    weak_spring.curve = &.{.{ .name = "soft", .curve = .{ .spring = .{ .stiffness = 0.2, .damping = 10 } } }};
+    var twice = bareApp();
+    twice.curve = &.{ .{ .name = "a", .curve = .linear }, .{ .name = "a", .curve = .ease } };
+    var no_speed = bareApp();
+    no_speed.animation = &.{.{ .leaf = .fade, .curve = "default" }};
+    var no_curve = bareApp();
+    no_curve.animation = &.{.{ .leaf = .fade, .speed = 3 }};
+    var still = bareApp();
+    still.animation = &.{.{ .leaf = .fade, .speed = 0, .curve = "default" }};
+    var leaf_twice = bareApp();
+    leaf_twice.animation = &.{ .{ .leaf = .fade, .enabled = false }, .{ .leaf = .fade, .speed = 3, .curve = "default" } };
+    for ([_]Case{
+        .{ .app = weak_spring, .message = "curve 'soft': its spring's stiffness is 0.2, and Hyprland takes none below 0.5" },
+        .{ .app = twice, .message = "curve 'a' is defined twice" },
+        .{ .app = no_speed, .message = "animation 'fade' is enabled, so it needs a speed" },
+        .{ .app = no_curve, .message = "animation 'fade' is enabled, so it needs a curve" },
+        .{ .app = still, .message = "animation 'fade': its speed is 0, and Hyprland takes only speeds above 0" },
+        .{ .app = leaf_twice, .message = "animation 'fade' is set twice" },
+    }) |case| {
+        var fixture: Fixture = undefined;
+        try fixture.init(&.{});
+        defer fixture.deinit();
+        try testing.expectError(error.AppFailed, case.app.apply(&fixture.output));
+        try testing.expectEqualStrings(case.message, fixture.diagnostics.message());
+    }
+}
+
+test "the edit target refuses curves and animations, which the user's files can't be given" {
+    var fixture: Fixture = undefined;
+    try fixture.init(&.{.{ ".config/hypr/hyprland.lua", "hl.config({ general = { gaps_in = 5 } })\n" }});
+    defer fixture.deinit();
+    var app = bareApp();
+    app.target = .{ .edit = .{ .files = "~/.config/hypr/**/*.lua" } };
+    app.curve = &.{.{ .name = "expo_out", .curve = .ease_out_expo }};
+    try testing.expectError(error.AppFailed, app.apply(&fixture.output));
+    try testing.expect(std.mem.find(u8, fixture.diagnostics.message(), "curves and animations are calls") != null);
 }
