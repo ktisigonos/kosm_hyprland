@@ -24,6 +24,10 @@ format: kosm.Format = .{ .color = .hex8 },
 ///, e.g. `general.col.inactive_border` from `general.col.active_border`. null: nothing
 /// is derived. `from`: the theme's `state.inactive`.
 inactive: ?kosm.Modifier = null,
+/// The keyboard: its layouts, variants, model, options and rules, written as XKB's comma
+/// separated lists to `input.kb_layout`, `kb_variant`, `kb_model`, `kb_options` and `kb_rules`
+/// wherever those are null. null: nothing is derived. Default: null.
+keyboard: ?kosm.Keyboard = null,
 /// Settings the app doesn't cover, such as a plugin's, written after its own:
 /// `.{ .path = "plugin.dynamic_cursors.length", .value = .{ .integer = 24 } }`. One that
 /// overlaps a set option or another extra fails the apply. Default: none.
@@ -118,7 +122,7 @@ pub const InputCapture = @import("sections/InputCapture.zig");
 pub const Quirks = @import("sections/Quirks.zig");
 
 /// App fields that are kosm's, not Hyprland options.
-const own_fields = [_][]const u8{ "target", "include", "format", "inactive", "extra" };
+const own_fields = [_][]const u8{ "target", "include", "format", "inactive", "keyboard", "extra" };
 
 /// Colors from the theme: the active border, glow and groupbar text from the accent
 /// (cyan) and the foreground, groups in yellow (locked: orange), windows that can't be grouped in
@@ -153,17 +157,18 @@ pub fn reload(self: App, reloader: *kosm.Reloader) !void {
 }
 
 /// Writes every set option to the target. An option Hyprland can't read (an empty gradient)
-/// fails the apply, naming it.
+/// or a keyboard name XKB can't take fails the apply, naming it.
 pub fn apply(self: App, output: *kosm.Output) !void {
     const file = switch (self.target) {
         .generate => |path| path,
         .edit => |files| files.files,
     };
+    const app = try self.withKeyboard(output, file);
     // Checked before deriving, so a bad active color is named instead of the inactive copy.
-    for (try settings.list(output.allocator, self, &own_fields)) |setting| {
+    for (try settings.list(output.allocator, app, &own_fields)) |setting| {
         if (setting.problem) |message| return output.fail(file, "option '{s}': {s}", .{ setting.keyed.path, message });
     }
-    const options = try settings.keyed(output.allocator, try settings.list(output.allocator, self.withDerived(), &own_fields));
+    const options = try settings.keyed(output.allocator, try settings.list(output.allocator, app.withDerived(), &own_fields));
     const set = try kosm.Setting.withExtras(output, file, options, self.extra, .{ .any_key = self.target == .edit });
     switch (self.target) {
         .generate => {
@@ -178,6 +183,20 @@ pub fn apply(self: App, output: *kosm.Output) !void {
             for (set) |setting| try selection.set(setting.path, setting.value);
         },
     }
+}
+
+/// The app with every null `input.kb_*` option taken from `keyboard`.
+fn withKeyboard(self: App, output: *kosm.Output, file: []const u8) !App {
+    var app = self;
+    const keyboard = self.keyboard orelse return app;
+    if (keyboard.problem()) |found| return output.fail(file, "keyboard {s} '{s}' {s}", .{ found.kind, found.name, found.reason });
+    const input = &app.input;
+    if (input.kb_layout == null) input.kb_layout = try keyboard.layoutList(output.allocator);
+    if (input.kb_variant == null) input.kb_variant = try keyboard.variantList(output.allocator);
+    if (input.kb_options == null) input.kb_options = try keyboard.optionList(output.allocator);
+    if (input.kb_model == null) input.kb_model = keyboard.model;
+    if (input.kb_rules == null) input.kb_rules = keyboard.rules;
+    return app;
 }
 
 /// The app with every null inactive color derived from its set active one.
@@ -726,4 +745,51 @@ test "App{} writes an empty module and its include block, and without inactive n
     var app: App = .{};
     app.general.col.active_border = .solid(kosm.hex("#808080"));
     try testing.expectEqual(null, app.withDerived().general.col.inactive_border);
+}
+
+test "a keyboard is written as XKB's comma lists, empty variants in position, and a set option wins" {
+    var fixture: Fixture = undefined;
+    try fixture.init(&.{});
+    defer fixture.deinit();
+    var app = bareApp();
+    app.keyboard = .{
+        .layouts = &.{ .{ .layout = "us" }, .{ .layout = "rs", .variant = "latin" }, .{ .layout = "rs" } },
+        .options = &.{ "grp:alt_shift_toggle", "caps:escape" },
+        .model = "pc105",
+    };
+    app.input.kb_options = "caps:swapescape";
+    try app.apply(&fixture.output);
+    try testing.expectEqualStrings(
+        \\return {
+        \\    input = {
+        \\        kb_model = "pc105",
+        \\        kb_layout = "us,rs,rs",
+        \\        kb_variant = ",latin,",
+        \\        kb_options = "caps:swapescape",
+        \\    },
+        \\}
+        \\
+    , fixture.planned("~/.config/hypr/kosm.lua"));
+}
+
+test "layouts without a variant write no kb_variant" {
+    var fixture: Fixture = undefined;
+    try fixture.init(&.{});
+    defer fixture.deinit();
+    var app = bareApp();
+    app.keyboard = .{ .layouts = &.{ .{ .layout = "us" }, .{ .layout = "ru" } } };
+    try app.apply(&fixture.output);
+    try testing.expectEqualStrings("return {\n    input = {\n        kb_layout = \"us,ru\",\n    },\n}\n", fixture.planned("~/.config/hypr/kosm.lua"));
+}
+
+test "a keyboard name holding a comma fails the apply, naming the app and the name" {
+    var fixture: Fixture = undefined;
+    try fixture.init(&.{});
+    defer fixture.deinit();
+    var app = bareApp();
+    app.keyboard = .{ .layouts = &.{ .{ .layout = "us" }, .{ .layout = "rs,ru" } } };
+    try testing.expectError(error.AppFailed, app.apply(&fixture.output));
+    try testing.expectEqualStrings("hyprland", fixture.diagnostics.app);
+    try testing.expectEqualStrings("keyboard layout 'rs,ru' holds a comma, which separates entries; give each its own entry", fixture.diagnostics.message());
+    try testing.expectEqual(0, fixture.plan.files.items.len);
 }

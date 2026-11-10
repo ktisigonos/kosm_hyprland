@@ -109,6 +109,7 @@ inside a set option's or another extra's fails the apply naming both, checked by
 | `target` | `default_target`: `.{ .generate = "~/.config/hypr/kosm.lua" }` |
 | `include` | `"~/.config/hypr/hyprland.lua"`: the file that gets the block reading the generated module, `.generate` target only; `null` for no block |
 | `format` | `.{ .color = .hex8 }`: `#rrggbbaa`, so alpha is kept; the rest from the Lua adapter, then kosm |
+| `keyboard` | null: nothing derived. A `kosm.Keyboard` (`.{ .layouts = &.{ .{ .layout = "us" }, .{ .layout = "rs", .variant = "latin" } } }`) fills `input.kb_layout`, `kb_variant`, `kb_model`, `kb_options` and `kb_rules` where they are null, as XKB's comma lists (`us,rs` and `,latin`) |
 | `inactive` | null: nothing derived; `from`: the theme's `state.inactive`, deriving the inactive colors listed above |
 | `extra` | `&.{}`: settings the app doesn't cover, by path |
 
