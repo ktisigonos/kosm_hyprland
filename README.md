@@ -7,7 +7,7 @@ Hyprland's own (`hyprland.general.col.active_border`, `hyprland.decoration.blur.
 Everything left `null` is not written, so Hyprland's own default applies.
 
 The generated module is written by this package's own `hyprland` adapter: Hyprland's calls
-(`hl.env`, `hl.curve`, `hl.animation`), then the table `hl.config` takes, with values spelled by the `lua`
+(`hl.env`, `hl.curve`, `hl.animation`), each plugin's settings inside a check that it is loaded, then the table `hl.config` takes, with values spelled by the `lua`
 adapter of `kosm_lua`. The package brings that one along too (`kosm_hyprland.lua_adapter`), so a
 config needs only `kosm_hyprland`.
 
@@ -87,15 +87,31 @@ The types live in `kosm_hyprland.values`:
   (`scrolling.follow_focus`, `cursor.no_hardware_cursors`, ...) declare `numbered` and are written
   as the number (`.soft` -> `2`).
 
+## Plugins
+
+Hyprland refuses the settings of a plugin it has not loaded, so a plugin's settings go in
+`plugin`, not in `extra`:
+
+```zig
+hyprland.plugin = &.{.{ .name = "dynamic_cursors", .settings = &.{
+    .{ .path = "enabled", .value = .{ .boolean = true } },
+    .{ .path = "rotate.length", .value = .{ .integer = 24 } },
+} }};
+```
+
+The generated module hands them to `hl.config` inside `if hl.plugin.dynamic_cursors ~= nil`,
+before the table it returns. With the `.edit` target they are set at
+`plugin.dynamic_cursors.<path>` in your files, also inside such an `if`. A plugin given twice,
+or an `extra` reaching into a plugin that `plugin` holds, fails the apply.
+
 ## Settings the app doesn't cover
 
-`extra` writes any other setting, such as a plugin's or one Hyprland added after this app, by
-path. Each value is a `kosm.Value`, formatted like the app's own options:
+`extra` writes any other setting, such as one Hyprland added after this app, by path. Each
+value is a `kosm.Value`, formatted like the app's own options:
 
 ```zig
 hyprland.extra = &.{
-    .{ .path = "plugin.dynamic_cursors.length", .value = .{ .integer = 24 } },
-    .{ .path = "plugin.dynamic_cursors.enabled", .value = .{ .boolean = true } },
+    .{ .path = "general.some_new_option", .value = .{ .integer = 24 } },
 };
 ```
 
@@ -139,6 +155,7 @@ a curve or a leaf given twice and a spring value below 0.5, which Hyprland refus
 | `qt_platform_theme` | null; else written as `QT_QPA_PLATFORMTHEME` unless `env` sets it |
 | `curve` | `&.{}`: the curves animations name, each `.{ .name = "expo_out", .curve = .ease_out_expo }` (any `kosm.Curve`: a bezier, a spring, a standard easing) and one `hl.curve` call. `.generate` target only |
 | `animation` | `&.{}`: Hyprland's own animations. Each entry is one `hl.animation` call: `.leaf` (`.windows`, `.fade_in`, `.border_angle`, ...), `.enabled` (true), `.speed` in tenths of a second, `.curve` (a name in `curve`, or `default`) and `.style` as Hyprland spells it. `.generate` target only |
+| `plugin` | `&.{}`: plugins' settings, each plugin `.{ .name, .settings }` with settings by path below the plugin; written only while Hyprland has the plugin loaded |
 | `inactive` | null: nothing derived; `from`: the theme's `state.inactive`, deriving the inactive colors listed above |
 | `extra` | `&.{}`: settings the app doesn't cover, by path |
 

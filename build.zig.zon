@@ -9,8 +9,8 @@
             .hash = "kosm-0.0.0-YCShsg6XCgA_mLks4gZNgODUTccvTHIYHFn_jI4s4Yae",
         },
         .kosm_lua = .{
-            .url = "git+https://git.nnstdios.com/nnra6864/kosm_lua?ref=master#be46b3111f53623da23cdeb0f620aa94c3f95d88",
-            .hash = "kosm_lua-0.0.0-lA6UWL1eAACBGIcwhCTHjEri94Swt0BNjOfVi195xl1_",
+            .url = "git+https://git.nnstdios.com/nnra6864/kosm_lua?ref=master#3dabce7a2bb197be458b2c6cc361136f0e6b6177",
+            .hash = "kosm_lua-0.0.0-lA6UWF9lAACT_42wTkRJSdXEqqYGVbUXLGtTLsVI6Dmr",
         },
     },
     .paths = .{

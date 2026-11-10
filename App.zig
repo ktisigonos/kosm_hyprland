@@ -53,9 +53,15 @@ curve: []const values.Curve = &.{},
 /// generated module: `.{ .leaf = .windows, .speed = 3, .curve = "expo_out", .style = "slide" }`.
 /// Only with the `.generate` target. Default: none, so Hyprland's own animations apply.
 animation: []const values.Animation = &.{},
-/// Settings the app doesn't cover, such as a plugin's, written after its own:
-/// `.{ .path = "plugin.dynamic_cursors.length", .value = .{ .integer = 24 } }`. One that
-/// overlaps a set option or another extra fails the apply. Default: none.
+/// Plugins' settings, each plugin's written only while Hyprland has it loaded:
+/// `.{ .name = "dynamic_cursors", .settings = &.{.{ .path = "rotate.length", .value = .{ .integer = 24 } }} }`.
+/// The `.generate` target wraps each in `if hl.plugin.<name> ~= nil`; the `.edit` target sets
+/// them at `plugin.<name>.<path>` in the user's files. A plugin given twice fails the apply.
+/// Default: none.
+plugin: []const values.Plugin = &.{},
+/// Settings the app doesn't cover, written after its own:
+/// `.{ .path = "general.some_new_option", .value = .{ .integer = 24 } }`. One that overlaps
+/// a set option, another extra or a plugin in `plugin` fails the apply. Default: none.
 extra: []const kosm.Setting = &.{},
 
 general: General = .{},
@@ -147,7 +153,7 @@ pub const InputCapture = @import("sections/InputCapture.zig");
 pub const Quirks = @import("sections/Quirks.zig");
 
 /// App fields that are kosm's, not Hyprland options.
-const own_fields = [_][]const u8{ "target", "include", "format", "inactive", "keyboard", "env", "cursor_theme", "cursor_size", "gtk_theme", "qt_platform_theme", "curve", "animation", "extra" };
+const own_fields = [_][]const u8{ "target", "include", "format", "inactive", "keyboard", "env", "cursor_theme", "cursor_size", "gtk_theme", "qt_platform_theme", "curve", "animation", "plugin", "extra" };
 
 /// Colors from the theme: the active border, glow and groupbar text from the accent
 /// (cyan) and the foreground, groups in yellow (locked: orange), windows that can't be grouped in
@@ -195,6 +201,7 @@ pub fn apply(self: App, output: *kosm.Output) !void {
     }
     const options = try settings.keyed(output.allocator, try settings.list(output.allocator, app.withDerived(), &own_fields));
     const set = try kosm.Setting.withExtras(output, file, options, self.extra, .{ .any_key = self.target == .edit });
+    try self.checkPlugins(output, file, set[options.len..]);
     switch (self.target) {
         .generate => {
             if (self.include != null and !std.mem.eql(u8, file, default_module))
@@ -210,8 +217,37 @@ pub fn apply(self: App, output: *kosm.Output) !void {
                 return output.fail(file, "environment variables are calls, which kosm writes only into a module it generates; leave env, cursor_theme, cursor_size, gtk_theme and qt_platform_theme unset, or use the generate target", .{});
             var selection = try output.edit(.{ .files = files.files, .exclude = files.exclude, .lang = "lua", .format = self.format });
             for (set) |setting| try selection.set(setting.path, setting.value);
+            for (self.plugin) |plugin| {
+                for (plugin.settings) |setting| try selection.set(try std.fmt.allocPrint(output.allocator, "plugin.{s}.{s}", .{ plugin.name, setting.path }), setting.value);
+            }
         },
     }
+}
+
+/// Fails the apply for a plugin whose name `hl.plugin.<name>` can't spell, one given twice, and
+/// an extra reaching into a plugin that `plugin` holds, which would escape its check.
+fn checkPlugins(self: App, output: *kosm.Output, file: []const u8, extras: []const kosm.Setting.Keyed) !void {
+    for (self.plugin, 0..) |plugin, index| {
+        if (!isLuaName(plugin.name)) return output.fail(file, "plugin '{s}' is not a name hl.plugin can hold: use letters, digits and _, not starting with a digit", .{plugin.name});
+        for (self.plugin[0..index]) |earlier| {
+            if (std.mem.eql(u8, earlier.name, plugin.name)) return output.fail(file, "plugin '{s}' is given twice; put all its settings in one entry", .{plugin.name});
+        }
+        for (extras) |extra| {
+            if (extra.keys.len < 2) continue;
+            const first = extra.keys[0] orelse continue;
+            const second = extra.keys[1] orelse continue;
+            if (std.mem.eql(u8, first, hyprland_adapter.plugin_part) and std.mem.eql(u8, second, plugin.name))
+                return output.fail(file, "extra '{s}' sets plugin '{s}', which plugin already holds; move it into that plugin's settings", .{ extra.path, plugin.name });
+        }
+    }
+}
+
+fn isLuaName(name: []const u8) bool {
+    if (name.len == 0 or std.ascii.isDigit(name[0])) return false;
+    for (name) |character| {
+        if (!std.ascii.isAlphanumeric(character) and character != '_') return false;
+    }
+    return true;
 }
 
 /// Every environment variable to write, by name: the ones the app derives that `env` does not
@@ -248,7 +284,7 @@ fn variables(self: App, output: *kosm.Output, file: []const u8) ![]const kosm.Va
 }
 
 /// The generated module as the `hyprland` adapter takes it: the environment variables, the
-/// curves and animations, then `config`, the options. A curve or animation Hyprland would refuse fails the apply.
+/// curves and animations, the plugins' settings, then `config`, the options. A curve or animation Hyprland would refuse fails the apply.
 fn module(self: App, output: *kosm.Output, file: []const u8, config: kosm.Value) !kosm.Value {
     const allocator = output.allocator;
     var parts: std.ArrayList(kosm.Value.Entry) = .empty;
@@ -274,6 +310,14 @@ fn module(self: App, output: *kosm.Output, file: []const u8, config: kosm.Value)
             value.* = try self.animationValue(output, file, animation);
         }
         try parts.append(allocator, .{ .key = hyprland_adapter.animation_part, .value = .{ .list = animations } });
+    }
+    if (self.plugin.len != 0) {
+        const plugins = try allocator.alloc(kosm.Value.Entry, self.plugin.len);
+        for (self.plugin, plugins) |plugin, *entry| {
+            const checked = try kosm.Setting.withExtras(output, file, &.{}, plugin.settings, .{});
+            entry.* = .{ .key = plugin.name, .value = try kosm.Setting.tree(allocator, checked) };
+        }
+        try parts.append(allocator, .{ .key = hyprland_adapter.plugin_part, .value = .{ .table = plugins } });
     }
     try parts.append(allocator, .{ .key = hyprland_adapter.config_part, .value = config });
     return .{ .table = parts.items };
@@ -1097,4 +1141,89 @@ test "the edit target refuses environment variables, set or derived" {
     app.cursor_size = 24;
     try testing.expectError(error.AppFailed, app.apply(&fixture.output));
     try testing.expect(std.mem.find(u8, fixture.diagnostics.message(), "environment variables are calls") != null);
+}
+
+const test_plugins = [_]values.Plugin{.{ .name = "dynamic_cursors", .settings = &.{
+    .{ .path = "enabled", .value = .{ .boolean = true } },
+    .{ .path = "mode", .value = .{ .string = "rotate" } },
+    .{ .path = "rotate.length", .value = .{ .integer = 24 } },
+} }};
+
+test "a plugin's settings reach hl.config only inside a check that Hyprland has it loaded" {
+    var fixture: Fixture = undefined;
+    try fixture.init(&.{});
+    defer fixture.deinit();
+    var app = bareApp();
+    app.general.border_size = 2;
+    app.plugin = &test_plugins;
+    try app.apply(&fixture.output);
+    try testing.expectEqualStrings(
+        \\if hl.plugin.dynamic_cursors ~= nil then
+        \\    hl.config({
+        \\        plugin = {
+        \\            dynamic_cursors = {
+        \\                enabled = true,
+        \\                mode = "rotate",
+        \\                rotate = {
+        \\                    length = 24,
+        \\                },
+        \\            },
+        \\        },
+        \\    })
+        \\end
+        \\
+        \\return {
+        \\    general = {
+        \\        border_size = 2,
+        \\    },
+        \\}
+        \\
+    , fixture.planned("~/.config/hypr/kosm.lua"));
+}
+
+test "the edit target sets a plugin's settings by path in the user's files" {
+    const user_config =
+        \\if hl.plugin.dynamic_cursors ~= nil then
+        \\    hl.config({ plugin = { dynamic_cursors = { enabled = false, mode = "tilt", rotate = { length = 20, offset = 21 } } } })
+        \\end
+        \\
+    ;
+    var fixture: Fixture = undefined;
+    try fixture.init(&.{.{ ".config/hypr/plugins.lua", user_config }});
+    defer fixture.deinit();
+    var app = bareApp();
+    app.target = .{ .edit = .{ .files = "~/.config/hypr/**/*.lua" } };
+    app.plugin = &test_plugins;
+    try app.apply(&fixture.output);
+    try testing.expectEqualStrings(
+        \\if hl.plugin.dynamic_cursors ~= nil then
+        \\    hl.config({ plugin = { dynamic_cursors = { enabled = true, mode = "rotate", rotate = { length = 24, offset = 21 } } } })
+        \\end
+        \\
+    , fixture.planned("~/.config/hypr/plugins.lua"));
+}
+
+test "a plugin given twice, misnamed or also reached by an extra fails the apply, naming it" {
+    const Case = struct { app: App, message: []const u8 };
+    var twice = bareApp();
+    twice.plugin = &.{ test_plugins[0], .{ .name = "hyprglass" }, test_plugins[0] };
+    var misnamed = bareApp();
+    misnamed.plugin = &.{.{ .name = "dynamic-cursors" }};
+    var escaped = bareApp();
+    escaped.plugin = &test_plugins;
+    escaped.extra = &.{.{ .path = "plugin.dynamic_cursors.shake.enabled", .value = .{ .boolean = false } }};
+    var same_setting = bareApp();
+    same_setting.plugin = &.{.{ .name = "hyprglass", .settings = &.{ .{ .path = "tint.color", .value = .{ .integer = 1 } }, .{ .path = "tint", .value = .{ .integer = 2 } } } }};
+    for ([_]Case{
+        .{ .app = twice, .message = "plugin 'dynamic_cursors' is given twice; put all its settings in one entry" },
+        .{ .app = misnamed, .message = "plugin 'dynamic-cursors' is not a name hl.plugin can hold: use letters, digits and _, not starting with a digit" },
+        .{ .app = escaped, .message = "extra 'plugin.dynamic_cursors.shake.enabled' sets plugin 'dynamic_cursors', which plugin already holds; move it into that plugin's settings" },
+        .{ .app = same_setting, .message = "extra 'tint' and extra 'tint.color' write the same key, or one inside the other; keep one" },
+    }) |case| {
+        var fixture: Fixture = undefined;
+        try fixture.init(&.{});
+        defer fixture.deinit();
+        try testing.expectError(error.AppFailed, case.app.apply(&fixture.output));
+        try testing.expectEqualStrings(case.message, fixture.diagnostics.message());
+    }
 }

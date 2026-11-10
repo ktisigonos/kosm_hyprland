@@ -1,6 +1,7 @@
 //! Hyprland's Lua config as kosm generates it: environment variables, curves and animations as
-//! the calls Hyprland takes them by (`hl.env`, `hl.curve`, `hl.animation`), then the options as
-//! the table `hl.config` takes. The module still returns that table, so `hl.config(require("kosm"))` reads it.
+//! the calls Hyprland takes them by (`hl.env`, `hl.curve`, `hl.animation`), each plugin's
+//! settings inside a check that Hyprland has it loaded, then the options as the table
+//! `hl.config` takes. The module still returns that table, so `hl.config(require("kosm"))` reads it.
 
 const std = @import("std");
 const kosm = @import("kosm");
@@ -22,10 +23,13 @@ pub const env_part = "env";
 pub const curve_part = "curve";
 /// A list of the tables `hl.animation` takes.
 pub const animation_part = "animation";
+/// A table of plugins by name, each the table of its settings. A plugin's settings reach
+/// `hl.config` only while `hl.plugin.<name>` exists.
+pub const plugin_part = "plugin";
 /// The table `hl.config` takes, which the module returns.
 pub const config_part = "config";
 
-const part_list = env_part ++ ", " ++ curve_part ++ ", " ++ animation_part ++ ", " ++ config_part;
+const part_list = env_part ++ ", " ++ curve_part ++ ", " ++ animation_part ++ ", " ++ plugin_part ++ ", " ++ config_part;
 
 fn serialize(writer: *std.Io.Writer, root: kosm.Value, context: *kosm.Adapter.Context) kosm.Adapter.Error!void {
     if (root != .table) return context.unsupported("a Hyprland module is a table of parts ({s}), not a {s}", .{ part_list, @tagName(root) });
@@ -64,6 +68,14 @@ fn serialize(writer: *std.Io.Writer, root: kosm.Value, context: *kosm.Adapter.Co
                 try writer.writeAll(")\n");
             }
             if (part.value.list.len != 0) try writer.writeByte('\n');
+        } else if (std.mem.eql(u8, part.key, plugin_part)) {
+            if (part.value != .table) return context.unsupported("'{s}' is a table of plugins by name, not a {s}", .{ plugin_part, @tagName(part.value) });
+            for (part.value.table) |plugin| {
+                try writer.print("if hl.plugin.{s} ~= nil then\n    hl.config(", .{plugin.key});
+                const settings: kosm.Value = .{ .table = &.{.{ .key = plugin_part, .value = .{ .table = &.{plugin} } }} };
+                try lua.writeBlock(writer, settings, 1, context);
+                try writer.writeAll(")\nend\n\n");
+            }
         } else return context.unsupported("a Hyprland module has no part '{s}'; its parts are {s}", .{ part.key, part_list });
     }
     try serialize_table(writer, config, context);
