@@ -7,7 +7,7 @@ Hyprland's own (`hyprland.general.col.active_border`, `hyprland.decoration.blur.
 Everything left `null` is not written, so Hyprland's own default applies.
 
 The generated module is written by this package's own `hyprland` adapter: Hyprland's calls
-(`hl.curve`, `hl.animation`), then the table `hl.config` takes, with values spelled by the `lua`
+(`hl.env`, `hl.curve`, `hl.animation`), then the table `hl.config` takes, with values spelled by the `lua`
 adapter of `kosm_lua`. The package brings that one along too (`kosm_hyprland.lua_adapter`), so a
 config needs only `kosm_hyprland`.
 
@@ -132,6 +132,11 @@ a curve or a leaf given twice and a spring value below 0.5, which Hyprland refus
 | `include` | `"~/.config/hypr/hyprland.lua"`: the file that gets the block reading the generated module, `.generate` target only; `null` for no block |
 | `format` | `.{ .color = .hex8 }`: `#rrggbbaa`, so alpha is kept; the rest from the Lua adapter, then kosm |
 | `keyboard` | null: nothing derived. A `kosm.Keyboard` (`.{ .layouts = &.{ .{ .layout = "us" }, .{ .layout = "rs", .variant = "latin" } } }`) fills `input.kb_layout`, `kb_variant`, `kb_model`, `kb_options` and `kb_rules` where they are null, as XKB's comma lists (`us,rs` and `,latin`) |
+| `env` | `&.{}`: environment variables, each `.{ .name = "XDG_CURRENT_DESKTOP", .value = "Hyprland" }` and one `hl.env` call, in order; a name given twice fails the apply. `.generate` target only |
+| `cursor_theme` | null; else written as `HYPRCURSOR_THEME` and `XCURSOR_THEME` unless `env` sets them |
+| `cursor_size` | null; else written as `HYPRCURSOR_SIZE` and `XCURSOR_SIZE` unless `env` sets them |
+| `gtk_theme` | null; else written as `GTK_THEME` unless `env` sets it |
+| `qt_platform_theme` | null; else written as `QT_QPA_PLATFORMTHEME` unless `env` sets it |
 | `curve` | `&.{}`: the curves animations name, each `.{ .name = "expo_out", .curve = .ease_out_expo }` (any `kosm.Curve`: a bezier, a spring, a standard easing) and one `hl.curve` call. `.generate` target only |
 | `animation` | `&.{}`: Hyprland's own animations. Each entry is one `hl.animation` call: `.leaf` (`.windows`, `.fade_in`, `.border_angle`, ...), `.enabled` (true), `.speed` in tenths of a second, `.curve` (a name in `curve`, or `default`) and `.style` as Hyprland spells it. `.generate` target only |
 | `inactive` | null: nothing derived; `from`: the theme's `state.inactive`, deriving the inactive colors listed above |

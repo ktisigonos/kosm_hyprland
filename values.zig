@@ -12,6 +12,7 @@ pub const CssGap = @import("values/CssGap.zig");
 pub const AccelCurve = @import("values/AccelCurve.zig");
 pub const Curve = @import("values/Curve.zig");
 pub const Animation = @import("values/Animation.zig");
+pub const Variable = @import("values/Variable.zig");
 
 /// A font weight by name (`.{ .name = .bold }`) or as a number from 0 (`.{ .weight = 450 }`).
 pub const FontWeight = union(enum) {

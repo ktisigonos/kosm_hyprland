@@ -1,6 +1,6 @@
-//! Hyprland's Lua config as kosm generates it: curves and animations as the calls Hyprland
-//! takes them by (`hl.curve`, `hl.animation`), then the options as the table `hl.config`
-//! takes. The module still returns that table, so `hl.config(require("kosm"))` reads it.
+//! Hyprland's Lua config as kosm generates it: environment variables, curves and animations as
+//! the calls Hyprland takes them by (`hl.env`, `hl.curve`, `hl.animation`), then the options as
+//! the table `hl.config` takes. The module still returns that table, so `hl.config(require("kosm"))` reads it.
 
 const std = @import("std");
 const kosm = @import("kosm");
@@ -16,6 +16,8 @@ pub const adapter: kosm.Adapter = .{
     .serialize = serialize,
 };
 
+/// A table of environment variables by name, each a string, for `hl.env`.
+pub const env_part = "env";
 /// A table of curves by name, each the table `hl.curve` takes after the name.
 pub const curve_part = "curve";
 /// A list of the tables `hl.animation` takes.
@@ -23,8 +25,10 @@ pub const animation_part = "animation";
 /// The table `hl.config` takes, which the module returns.
 pub const config_part = "config";
 
+const part_list = env_part ++ ", " ++ curve_part ++ ", " ++ animation_part ++ ", " ++ config_part;
+
 fn serialize(writer: *std.Io.Writer, root: kosm.Value, context: *kosm.Adapter.Context) kosm.Adapter.Error!void {
-    if (root != .table) return context.unsupported("a Hyprland module is a table of parts ({s}, {s}, {s}), not a {s}", .{ curve_part, animation_part, config_part, @tagName(root) });
+    if (root != .table) return context.unsupported("a Hyprland module is a table of parts ({s}), not a {s}", .{ part_list, @tagName(root) });
     // Both capabilities are part of the lua adapter kosm_lua declares.
     const format = lua.adapter.format.?;
     const serialize_table = lua.adapter.serialize.?;
@@ -32,6 +36,16 @@ fn serialize(writer: *std.Io.Writer, root: kosm.Value, context: *kosm.Adapter.Co
     for (root.table) |part| {
         if (std.mem.eql(u8, part.key, config_part)) {
             config = part.value;
+        } else if (std.mem.eql(u8, part.key, env_part)) {
+            if (part.value != .table) return context.unsupported("'{s}' is a table of variables by name, not a {s}", .{ env_part, @tagName(part.value) });
+            for (part.value.table) |variable| {
+                try writer.writeAll("hl.env(");
+                try format(writer, .{ .string = variable.key }, context);
+                try writer.writeAll(", ");
+                try format(writer, variable.value, context);
+                try writer.writeAll(")\n");
+            }
+            if (part.value.table.len != 0) try writer.writeByte('\n');
         } else if (std.mem.eql(u8, part.key, curve_part)) {
             if (part.value != .table) return context.unsupported("'{s}' is a table of curves by name, not a {s}", .{ curve_part, @tagName(part.value) });
             for (part.value.table) |curve| {
@@ -50,7 +64,7 @@ fn serialize(writer: *std.Io.Writer, root: kosm.Value, context: *kosm.Adapter.Co
                 try writer.writeAll(")\n");
             }
             if (part.value.list.len != 0) try writer.writeByte('\n');
-        } else return context.unsupported("a Hyprland module has no part '{s}'; its parts are {s}, {s} and {s}", .{ part.key, curve_part, animation_part, config_part });
+        } else return context.unsupported("a Hyprland module has no part '{s}'; its parts are {s}", .{ part.key, part_list });
     }
     try serialize_table(writer, config, context);
 }

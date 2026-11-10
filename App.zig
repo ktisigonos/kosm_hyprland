@@ -29,6 +29,22 @@ inactive: ?kosm.Modifier = null,
 /// separated lists to `input.kb_layout`, `kb_variant`, `kb_model`, `kb_options` and `kb_rules`
 /// wherever those are null. null: nothing is derived. Default: null.
 keyboard: ?kosm.Keyboard = null,
+/// Environment variables for Hyprland and every program it starts, each one `hl.env` call in the
+/// generated module, in this order: `.{ .name = "XDG_CURRENT_DESKTOP", .value = "Hyprland" }`.
+/// A name given twice fails the apply. Only with the `.generate` target. Default: none.
+env: []const values.Variable = &.{},
+/// The pointer's cursor theme, written as `HYPRCURSOR_THEME` and `XCURSOR_THEME` unless `env`
+/// sets them. null: neither is written. Default: null.
+cursor_theme: ?[]const u8 = null,
+/// The pointer's size in pixels, written as `HYPRCURSOR_SIZE` and `XCURSOR_SIZE` unless `env`
+/// sets them. null: neither is written. Default: null.
+cursor_size: ?u32 = null,
+/// The GTK theme's name, written as `GTK_THEME` unless `env` sets it. null: not written.
+/// Default: null.
+gtk_theme: ?[]const u8 = null,
+/// What themes Qt programs (`qt6ct`, `kde`, `hyprqt6engine`), written as
+/// `QT_QPA_PLATFORMTHEME` unless `env` sets it. null: not written. Default: null.
+qt_platform_theme: ?[]const u8 = null,
 /// The curves animations can name, each one `hl.curve` call in the generated module:
 /// `.{ .name = "expo_out", .curve = .ease_out_expo }`. Only with the `.generate` target.
 /// Default: none.
@@ -131,7 +147,7 @@ pub const InputCapture = @import("sections/InputCapture.zig");
 pub const Quirks = @import("sections/Quirks.zig");
 
 /// App fields that are kosm's, not Hyprland options.
-const own_fields = [_][]const u8{ "target", "include", "format", "inactive", "keyboard", "curve", "animation", "extra" };
+const own_fields = [_][]const u8{ "target", "include", "format", "inactive", "keyboard", "env", "cursor_theme", "cursor_size", "gtk_theme", "qt_platform_theme", "curve", "animation", "extra" };
 
 /// Colors from the theme: the active border, glow and groupbar text from the accent
 /// (cyan) and the foreground, groups in yellow (locked: orange), windows that can't be grouped in
@@ -190,17 +206,54 @@ pub fn apply(self: App, output: *kosm.Output) !void {
         .edit => |files| {
             if (self.curve.len != 0 or self.animation.len != 0)
                 return output.fail(file, "curves and animations are calls, which kosm writes only into a module it generates; leave curve and animation empty, or use the generate target", .{});
+            if ((try self.variables(output, file)).len != 0)
+                return output.fail(file, "environment variables are calls, which kosm writes only into a module it generates; leave env, cursor_theme, cursor_size, gtk_theme and qt_platform_theme unset, or use the generate target", .{});
             var selection = try output.edit(.{ .files = files.files, .exclude = files.exclude, .lang = "lua", .format = self.format });
             for (set) |setting| try selection.set(setting.path, setting.value);
         },
     }
 }
 
-/// The generated module as the `hyprland` adapter takes it: the curves and animations, then
-/// `config`, the options. A curve or animation Hyprland would refuse fails the apply.
+/// Every environment variable to write, by name: the ones the app derives that `env` does not
+/// set itself, then `env` in its order. A name `env` gives twice fails the apply.
+fn variables(self: App, output: *kosm.Output, file: []const u8) ![]const kosm.Value.Entry {
+    const allocator = output.allocator;
+    for (self.env, 0..) |variable, index| {
+        if (variable.name.len == 0) return output.fail(file, "environment variable {d} has no name", .{index + 1});
+        if (std.mem.findScalar(u8, variable.name, '=') != null) return output.fail(file, "environment variable '{s}' holds a '=', which no name can; give the value as .value", .{variable.name});
+        for (self.env[0..index]) |earlier| {
+            if (std.mem.eql(u8, earlier.name, variable.name))
+                return output.fail(file, "environment variable '{s}' is set twice, to '{s}' and to '{s}'", .{ variable.name, earlier.value, variable.value });
+        }
+    }
+    var found: std.ArrayList(kosm.Value.Entry) = .empty;
+    const size: ?[]const u8 = if (self.cursor_size) |pixels| try std.fmt.allocPrint(allocator, "{d}", .{pixels}) else null;
+    const derived = [_]struct { []const u8, ?[]const u8 }{
+        .{ "HYPRCURSOR_THEME", self.cursor_theme },
+        .{ "XCURSOR_THEME", self.cursor_theme },
+        .{ "HYPRCURSOR_SIZE", size },
+        .{ "XCURSOR_SIZE", size },
+        .{ "GTK_THEME", self.gtk_theme },
+        .{ "QT_QPA_PLATFORMTHEME", self.qt_platform_theme },
+    };
+    for (derived) |variable| {
+        const value = variable[1] orelse continue;
+        const set = for (self.env) |own| {
+            if (std.mem.eql(u8, own.name, variable[0])) break true;
+        } else false;
+        if (!set) try found.append(allocator, .{ .key = variable[0], .value = .{ .string = value } });
+    }
+    for (self.env) |variable| try found.append(allocator, .{ .key = variable.name, .value = .{ .string = variable.value } });
+    return found.items;
+}
+
+/// The generated module as the `hyprland` adapter takes it: the environment variables, the
+/// curves and animations, then `config`, the options. A curve or animation Hyprland would refuse fails the apply.
 fn module(self: App, output: *kosm.Output, file: []const u8, config: kosm.Value) !kosm.Value {
     const allocator = output.allocator;
     var parts: std.ArrayList(kosm.Value.Entry) = .empty;
+    const environment = try self.variables(output, file);
+    if (environment.len != 0) try parts.append(allocator, .{ .key = hyprland_adapter.env_part, .value = .{ .table = environment } });
     if (self.curve.len != 0) {
         const curves = try allocator.alloc(kosm.Value.Entry, self.curve.len);
         for (self.curve, curves, 0..) |named, *entry, index| {
@@ -988,4 +1041,60 @@ test "the edit target refuses curves and animations, which the user's files can'
     app.curve = &.{.{ .name = "expo_out", .curve = .ease_out_expo }};
     try testing.expectError(error.AppFailed, app.apply(&fixture.output));
     try testing.expect(std.mem.find(u8, fixture.diagnostics.message(), "curves and animations are calls") != null);
+}
+
+test "environment variables are hl.env calls in order, derived ones first and yielding to set ones" {
+    var fixture: Fixture = undefined;
+    try fixture.init(&.{});
+    defer fixture.deinit();
+    var app = bareApp();
+    app.cursor_theme = "Bibata";
+    app.cursor_size = 24;
+    app.gtk_theme = "Krystallos";
+    app.qt_platform_theme = "qt6ct";
+    app.env = &.{
+        .{ .name = "XDG_CURRENT_DESKTOP", .value = "Hyprland" },
+        .{ .name = "XCURSOR_SIZE", .value = "32" },
+        .{ .name = "QT_QPA_PLATFORM", .value = "wayland;xcb" },
+    };
+    try app.apply(&fixture.output);
+    try testing.expectEqualStrings(
+        \\hl.env("HYPRCURSOR_THEME", "Bibata")
+        \\hl.env("XCURSOR_THEME", "Bibata")
+        \\hl.env("HYPRCURSOR_SIZE", "24")
+        \\hl.env("GTK_THEME", "Krystallos")
+        \\hl.env("QT_QPA_PLATFORMTHEME", "qt6ct")
+        \\hl.env("XDG_CURRENT_DESKTOP", "Hyprland")
+        \\hl.env("XCURSOR_SIZE", "32")
+        \\hl.env("QT_QPA_PLATFORM", "wayland;xcb")
+        \\
+        \\return {}
+        \\
+    , fixture.planned("~/.config/hypr/kosm.lua"));
+}
+
+test "an environment variable set twice fails the apply, naming it and both values" {
+    var fixture: Fixture = undefined;
+    try fixture.init(&.{});
+    defer fixture.deinit();
+    var app = bareApp();
+    app.env = &.{ .{ .name = "GTK_THEME", .value = "a" }, .{ .name = "TERMINAL", .value = "kitty" }, .{ .name = "GTK_THEME", .value = "b" } };
+    try testing.expectError(error.AppFailed, app.apply(&fixture.output));
+    try testing.expectEqualStrings("environment variable 'GTK_THEME' is set twice, to 'a' and to 'b'", fixture.diagnostics.message());
+
+    app.env = &.{.{ .name = "GTK_THEME=a", .value = "" }};
+    try testing.expectError(error.AppFailed, app.apply(&fixture.output));
+    try testing.expect(std.mem.find(u8, fixture.diagnostics.message(), "holds a '='") != null);
+    try testing.expectEqual(0, fixture.plan.files.items.len);
+}
+
+test "the edit target refuses environment variables, set or derived" {
+    var fixture: Fixture = undefined;
+    try fixture.init(&.{.{ ".config/hypr/hyprland.lua", "hl.config({ general = { gaps_in = 5 } })\n" }});
+    defer fixture.deinit();
+    var app = bareApp();
+    app.target = .{ .edit = .{ .files = "~/.config/hypr/**/*.lua" } };
+    app.cursor_size = 24;
+    try testing.expectError(error.AppFailed, app.apply(&fixture.output));
+    try testing.expect(std.mem.find(u8, fixture.diagnostics.message(), "environment variables are calls") != null);
 }
