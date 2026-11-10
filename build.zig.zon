@@ -17,6 +17,7 @@
         "build.zig",
         "build.zig.zon",
         "root.zig",
+        "adapter.zig",
         "App.zig",
         "Files.zig",
         "settings.zig",
