@@ -156,20 +156,20 @@ pub const Quirks = @import("sections/Quirks.zig");
 const own_fields = [_][]const u8{ "target", "include", "format", "inactive", "keyboard", "env", "cursor_theme", "cursor_size", "gtk_theme", "qt_platform_theme", "curve", "animation", "plugin", "extra" };
 
 /// Colors from the theme: the active border, glow and groupbar text from the accent
-/// (cyan) and the foreground, groups in yellow (locked: orange), windows that can't be grouped in
+/// and foreground roles, groups in yellow (locked: orange), windows that can't be grouped in
 /// magenta, the shadow from `surface.shadow`, the background behind windows. Inactive colors
 /// derive through `inactive`; every other option is left to Hyprland.
 pub fn from(theme: kosm.Theme) App {
     const palette = theme.palette;
     const variations = theme.variations;
-    const foreground = if (theme.mode == .dark) palette.white else palette.black;
-    const background = if (theme.mode == .dark) palette.black else palette.white;
+    const foreground = theme.roles.foreground;
+    const background = theme.roles.background;
     var app: App = .{ .inactive = variations.state.inactive };
 
-    app.general.col.active_border = .solid(palette.cyan);
+    app.general.col.active_border = .solid(theme.roles.accent);
     app.general.col.nogroup_border_active = .solid(palette.magenta);
     app.decoration.shadow.color = .solid(variations.surface.shadow.apply(background));
-    app.decoration.glow.color = .solid(palette.cyan);
+    app.decoration.glow.color = .solid(theme.roles.accent);
     app.group.col.border_active = .solid(palette.yellow);
     app.group.col.border_locked_active = .solid(palette.orange);
     app.group.groupbar.col.active = .solid(palette.yellow);
@@ -489,7 +489,7 @@ test "from writes Hyprland's own shape to the generated module, inactive colors 
     var fixture: Fixture = undefined;
     try fixture.init(&.{});
     defer fixture.deinit();
-    var app = from(kosm.Theme.from(test_palette, .dark));
+    var app = from(kosm.Theme.from(.{ .palette = test_palette, .mode = .dark }));
     app.decoration.blur.size = 20;
     app.decoration.blur.variant = .frost;
     try app.apply(&fixture.output);
@@ -527,7 +527,7 @@ test "hyprland.lua gets a block reading the generated module at its end, once" {
         .{ ".config/hypr/done.lua", user_config ++ "-- kosm:begin hyprland\nhl.config(require(\"kosm\"))\n-- kosm:end\n" },
     });
     defer fixture.deinit();
-    var app = from(kosm.Theme.from(test_palette, .dark));
+    var app = from(kosm.Theme.from(.{ .palette = test_palette, .mode = .dark }));
     try app.apply(&fixture.output);
     try testing.expectEqualStrings(user_config ++ "-- kosm:begin hyprland\nhl.config(require(\"kosm\"))\n-- kosm:end\n", fixture.planned("~/.config/hypr/hyprland.lua"));
     try testing.expectEqual(0, fixture.warnings.items.items.len);
@@ -545,7 +545,7 @@ test "a missing hyprland.lua is left for Hyprland to create, with a warning" {
     var fixture: Fixture = undefined;
     try fixture.init(&.{});
     defer fixture.deinit();
-    const app = from(kosm.Theme.from(test_palette, .dark));
+    const app = from(kosm.Theme.from(.{ .palette = test_palette, .mode = .dark }));
     try app.apply(&fixture.output);
     try testing.expectEqual(1, fixture.plan.files.items.len);
     try testing.expectEqualStrings("~/.config/hypr/kosm.lua", fixture.plan.files.items[0].display_path);
@@ -559,7 +559,7 @@ test "the include block refuses a module require(\"kosm\") would not find" {
     var fixture: Fixture = undefined;
     try fixture.init(&.{});
     defer fixture.deinit();
-    var app = from(kosm.Theme.from(test_palette, .dark));
+    var app = from(kosm.Theme.from(.{ .palette = test_palette, .mode = .dark }));
     app.target = .{ .generate = "~/.config/hypr/theme.lua" };
     try testing.expectError(error.AppFailed, app.apply(&fixture.output));
     try testing.expectEqualStrings("the include block reads require(\"kosm\"), which finds only ~/.config/hypr/kosm.lua, not ~/.config/hypr/theme.lua; set include = null and read it yourself", fixture.diagnostics.message());

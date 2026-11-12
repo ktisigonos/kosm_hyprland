@@ -49,10 +49,10 @@ warning and carries on.
 
 ## Colors
 
-`from(theme)` sets: `general.col.active_border` and `decoration.glow.color` from cyan,
+`from(theme)` sets: `general.col.active_border` and `decoration.glow.color` from the accent role,
 `general.col.nogroup_border_active` from magenta, group borders and the groupbar from yellow
 (locked: orange), groupbar text and `misc.col.splash` from the foreground, `misc.background_color`
-from the background (white and black, swapped in light mode), and `decoration.shadow.color` from
+from the background role, and `decoration.shadow.color` from
 the background through `surface.shadow`. The blur effects' own colors (`aurora`, `fluid_jar`,
 `acrylic`) stay Hyprland's.
 
