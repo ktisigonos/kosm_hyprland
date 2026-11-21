@@ -558,7 +558,7 @@ a curve or a leaf given twice and a spring value below 0.5, which Hyprland refus
 | `master.focus_master_on_close` | `?bool` | When enabled, closing a window focuses the master window. null: Hyprland's default, `false`. |
 | `scrolling.fullscreen_on_one_column` | `?bool` | When enabled, a single column on a workspace will always span the entire screen. null: Hyprland's default, `true`. |
 | `scrolling.column_width` | `?f64` | The default width of a column. null: Hyprland's default, `0.5`. |
-| `scrolling.focus_fit_method` | enum: `.center`, `.fit` | When a column is focused, what method should be used to bring it into view. null: Hyprland's default, `fit`. |
+| `scrolling.focus_fit_method` | enum: `.center`, `.fit`, `.clamped_center` | When a column is focused, how it is brought into view: centered (`center`), fit into view (`fit`), or centered with clamping (`clamped_center`). null: Hyprland's default, `fit`. |
 | `scrolling.follow_focus` | enum: `.disabled`, `.click`, `.soft` | Whether focusing a window moves the scrolling tape: never, also always on a mouse click (`click`), or only when focus moves (`soft`). null: Hyprland's default, `click`. |
 | `scrolling.follow_min_visible` | `?f64` | When a window is focused, require that at least a given fraction of it is visible for focus to follow. null: Hyprland's default, `0.4`. |
 | `scrolling.explicit_column_widths` | `?[]const u8` | A comma-separated list of preconfigured widths for colresize +conf/-conf. null: Hyprland's default, `0.333, 0.5, 0.667, 1.0`. |

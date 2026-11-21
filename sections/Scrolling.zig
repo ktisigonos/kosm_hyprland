@@ -4,8 +4,9 @@
 fullscreen_on_one_column: ?bool = null,
 /// The default width of a column. null: Hyprland's default, `0.5`.
 column_width: ?f64 = null,
-/// When a column is focused, what method should be used to bring it into view. null: Hyprland's default, `fit`.
-focus_fit_method: ?enum(i64) { center = 0, fit = 1 } = null,
+/// When a column is focused, how it is brought into view: centered (`center`), fit into view (`fit`), or centered with
+/// clamping (`clamped_center`). null: Hyprland's default, `fit`.
+focus_fit_method: ?enum(i64) { center = 0, fit = 1, clamped_center = 2 } = null,
 /// Whether focusing a window moves the scrolling tape: never, also always on a mouse click (`click`), or only when focus moves (`soft`). null: Hyprland's default, `click`.
 follow_focus: ?enum(i64) {
     disabled = 0,
