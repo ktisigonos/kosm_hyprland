@@ -5,12 +5,12 @@
     .minimum_zig_version = "0.17.0",
     .dependencies = .{
         .kosm = .{
-            .url = "git+https://git.nnstdios.com/ktisigonos/kosm?ref=master#7346ed5bfef5f16f8d3cd39d1d437e746746a2a8",
-            .hash = "kosm-0.0.0-YCShsgmjCgDiHp77PKiytuVIJmGxJFJZwID74VSnDXpM",
+            .url = "git+https://git.nnstdios.com/ktisigonos/kosm?ref=master#7cac78ff369e4b85f732290cd4b415e35596c813",
+            .hash = "kosm-0.0.0-YCShsjJhGwChJLifPnNgdKvF6BvskAvM98V1N3cjOqMF",
         },
         .kosm_lua = .{
-            .url = "git+https://git.nnstdios.com/ktisigonos/kosm_lua?ref=master#6a16d7c827549ab470614585cd4ba91fd404a3f6",
-            .hash = "kosm_lua-0.0.0-lA6UWGFlAADCmsKapUSjf19eVDEhP4fEhE7T5-ZO24DE",
+            .url = "git+https://git.nnstdios.com/ktisigonos/kosm_lua?ref=master#18348ecf02d053ad7a81e2c42be4c0a72cf87240",
+            .hash = "kosm_lua-0.0.0-lA6UWMcXBAD5ay1hrUys4Y9YGNHJlXOpT_G8d1pqEWTV",
         },
     },
     .paths = .{
