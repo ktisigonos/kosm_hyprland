@@ -181,10 +181,10 @@ pub fn from(theme: kosm.Theme) App {
     return app;
 }
 
-/// Makes Hyprland re-read its config. Without a running Hyprland, kosm only warns.
+/// Makes Hyprland re-read its config; without a running Hyprland there is nothing to do.
 pub fn reload(self: App, reloader: *kosm.Reloader) !void {
     _ = self;
-    try reloader.run(&.{ "hyprctl", "reload" });
+    try reloader.runIfRunning("Hyprland", &.{ "hyprctl", "reload" });
 }
 
 /// Writes every set option to the target. An option Hyprland can't read (an empty gradient)

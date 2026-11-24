@@ -44,8 +44,8 @@ config needs only `kosm_hyprland`.
 Values your files keep elsewhere (a `defs.lua` table that `hl.config` reads) belong to a local
 app instead.
 
-After every apply the app runs `hyprctl reload`. If Hyprland isn't running, kosm prints a
-warning and carries on.
+After an apply that changed its file the app runs `hyprctl reload`. If Hyprland isn't running,
+there is nothing to reload.
 
 ## Colors
 
