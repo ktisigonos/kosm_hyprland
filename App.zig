@@ -17,7 +17,7 @@ target: Target = default_target,
 /// appended at its end so kosm's values win. Only with the `.generate` target, which
 /// must then write `~/.config/hypr/kosm.lua`. A missing file is left for Hyprland to create,
 /// with a warning. Null: no block. Default: `~/.config/hypr/hyprland.lua`.
-include: ?[]const u8 = "~/.config/hypr/hyprland.lua",
+include: ?[]const u8 = default_include,
 /// How values are spelled, e.g. `.color = .hex_upper`. Default: `#rrggbbaa` colors, so
 /// alpha is kept; null fields take the Lua adapter's, then kosm's.
 format: kosm.Format = .{ .color = .hex8 },
@@ -186,6 +186,24 @@ pub fn reload(self: App, reloader: *kosm.Reloader) !void {
     _ = self;
     try reloader.runIfRunning("Hyprland", &.{ "hyprctl", "reload" });
 }
+
+/// What `kosm doctor` checks: the `Hyprland` command, and the file getting the include block
+/// reading the generated module, which it does once applied. Without the block the user reads
+/// the module their own way, which kosm cannot check.
+pub fn checkup(self: App) kosm.Checkup {
+    const include = self.include orelse return .{ .program = .{ .command = "Hyprland" } };
+    return .{
+        .program = .{ .command = "Hyprland" },
+        .includes = switch (self.target) {
+            .generate => kosm.keep(kosm.Checkup.Include, &.{.{ .file = include, .line = "hl.config(require(\"kosm\"))" }}),
+            // The edited files are Hyprland's own.
+            .edit => &.{},
+        },
+    };
+}
+
+/// The file Hyprland reads first, which gets the include block by default.
+const default_include = "~/.config/hypr/hyprland.lua";
 
 /// Writes every set option to the target. An option Hyprland can't read (an empty gradient)
 /// or a keyboard name XKB can't take fails the apply, naming it.
@@ -1226,4 +1244,13 @@ test "a plugin given twice, misnamed or also reached by an extra fails the apply
         try testing.expectError(error.AppFailed, case.app.apply(&fixture.output));
         try testing.expectEqualStrings(case.message, fixture.diagnostics.message());
     }
+}
+
+test "checkup asks for hyprland.lua reading the module only when the generate target has an include block" {
+    const default = (App{}).checkup();
+    try testing.expectEqualStrings("Hyprland", default.program.?.command.?);
+    try testing.expectEqualStrings("~/.config/hypr/hyprland.lua", default.includes[0].file);
+    try testing.expect(default.includes[0].isIn("-- kosm:begin hyprland\nhl.config(require(\"kosm\"))\n-- kosm:end\n"));
+    try testing.expectEqual(0, (App{ .include = null }).checkup().includes.len);
+    try testing.expectEqual(0, (App{ .target = .{ .edit = .{ .files = "~/.config/hypr/*.lua" } } }).checkup().includes.len);
 }

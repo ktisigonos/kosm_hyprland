@@ -31,6 +31,8 @@ config needs only `kosm_hyprland`.
   `require("kosm")` only finds `~/.config/hypr/kosm.lua`, so generating elsewhere needs
   `include = null` and a `require` of your own.
   Or read single values from it (`require("kosm").decoration.blur.size`).
+  `kosm doctor` checks that the `Hyprland` command is installed and that the include block's
+  file reads the module, as it does once applied.
 - **`.edit`**: kosm sets each option where your own Lua files already hold it, so
   they stay the source of truth. Every set option must exist exactly once in the selected files,
   however they nest it (`col = { active_border = ... }` inside `hl.config({ general = ... })`).
